@@ -1,5 +1,7 @@
-import { chromaFromSpectrum, energy, smooth, type Chroma } from './chroma';
-import { detectChord } from './detect';
+import {
+  chromaFromSpectrum, compress, energy, estimateTuning, normalize, smooth, type Chroma,
+} from './chroma';
+import { buildTemplates, detectChord, HARMONIC_LEAK } from './detect';
 import { magnitudeSpectrum, planFFT } from './fft';
 import { HOP, type Observation } from './timeline';
 
@@ -12,6 +14,9 @@ import { HOP, type Observation } from './timeline';
 
 export const OFFLINE_FFT_SIZE = 8192;
 
+/** Log-compression strength. Chosen by sweep; see src/testing/sweep.test.ts. */
+export const DEFAULT_GAMMA = 1;
+
 export interface OfflineOptions {
   hop?: number;
   fftSize?: number;
@@ -20,6 +25,49 @@ export interface OfflineOptions {
   window?: number;
   /** Maps a position in the recording to a position in the song. */
   toSongTime?: (recordingTime: number) => number;
+  /**
+   * Global tuning offset in semitones. Omit to estimate it from the audio,
+   * which is almost always what you want.
+   */
+  tuning?: number;
+  /** Harmonic leakage modelled in the chord templates. For benchmarking. */
+  leak?: number;
+  /** Log-compression strength, to stop one loud voice dominating. */
+  gamma?: number;
+  /** Evidence an extra note needs, relative to the triad tones. */
+  support?: number;
+  /** Penalty for an extra note the audio does not support. */
+  penalty?: number;
+}
+
+/**
+ * Estimate a recording's tuning by sampling frames across its whole length.
+ * One frame is not enough -- a single chord's harmonics bias the answer --
+ * but the median over the recording is stable. Pure.
+ */
+export function estimateTrackTuning(
+  samples: Float32Array,
+  sampleRate: number,
+  fftSize = OFFLINE_FFT_SIZE,
+  probes = 24,
+): number {
+  const plan = planFFT(fftSize);
+  const frame = new Float32Array(fftSize);
+  const spectrum = new Float32Array(fftSize >> 1);
+  const votes: number[] = [];
+
+  const usable = samples.length - fftSize;
+  if (usable <= 0) return 0;
+
+  for (let i = 0; i < probes; i++) {
+    const start = Math.floor((usable * i) / Math.max(1, probes - 1));
+    frame.set(samples.subarray(start, start + fftSize));
+    magnitudeSpectrum(frame, plan, spectrum);
+    votes.push(estimateTuning(spectrum, sampleRate, fftSize));
+  }
+
+  votes.sort((a, b) => a - b);
+  return votes[votes.length >> 1];
 }
 
 /** Analyse a whole recording. Pure: same samples in, same observations out. */
@@ -33,8 +81,14 @@ export function analyseBuffer(
     fftSize = OFFLINE_FFT_SIZE,
     gate = 0.00001,
     window = 4,
+    gamma = DEFAULT_GAMMA,
     toSongTime = (t) => t,
   } = opts;
+
+  const tuning = opts.tuning ?? estimateTrackTuning(samples, sampleRate, fftSize);
+  const templates = opts.leak === undefined || opts.leak === HARMONIC_LEAK
+    ? undefined
+    : buildTemplates(opts.leak);
 
   const plan = planFFT(fftSize);
   const hopSamples = Math.max(1, Math.round(hop * sampleRate));
@@ -47,16 +101,17 @@ export function analyseBuffer(
     frame.set(samples.subarray(start, start + fftSize));
     magnitudeSpectrum(frame, plan, spectrum);
 
-    const chroma = chromaFromSpectrum(spectrum, sampleRate, fftSize);
-    if (energy(chroma) <= gate) {
+    const raw = chromaFromSpectrum(spectrum, sampleRate, fftSize, tuning);
+    if (energy(raw) <= gate) {
       recent.length = 0;
       continue;
     }
 
-    recent.push(chroma);
+    // Compress after normalising, so gamma means the same thing at any volume.
+    recent.push(compress(normalize(raw), gamma));
     if (recent.length > window) recent.shift();
 
-    const candidate = detectChord(smooth(recent));
+    const candidate = detectChord(smooth(recent), templates, opts.support, opts.penalty);
     if (candidate) {
       out.push({ time: toSongTime(start / sampleRate), candidate });
     }

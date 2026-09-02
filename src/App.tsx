@@ -5,7 +5,7 @@ import { listen, type Listener } from './capture/listener';
 import { record, decode, type Recorder, type Recording } from './capture/recorder';
 import { analyseBuffer } from './analysis/offline';
 import { toSongTime, toRecordingTime } from './analysis/timemap';
-import { detectKeys, type KeyCandidate } from './analysis/detect';
+import { detectKeys, SEVENTH_FRIENDLY_SUPPORT, type KeyCandidate } from './analysis/detect';
 import { smooth, type Chroma } from './analysis/chroma';
 import {
   emptyTimeline, observe, prune, mergePasses, commonProgression, changesPerMinute,
@@ -35,6 +35,7 @@ export default function App() {
   const [recording, setRecording] = useState<Recording | null>(null);
   const [analysing, setAnalysing] = useState(false);
   const [seekToSong, setSeekToSong] = useState<number | null>(null);
+  const [sevenths, setSevenths] = useState(false);
 
   const mountRef = useRef<HTMLDivElement>(null);
   const listenerRef = useRef<Listener | null>(null);
@@ -98,6 +99,7 @@ export default function App() {
 
       listenerRef.current = listen(src, {
         clock,
+        support: sevenths ? SEVENTH_FRIENDLY_SUPPORT : undefined,
         onObservation: (obs) => setTimeline((st) => observe(st, obs)),
         onChroma: (c) => {
           setChroma(c);
@@ -113,7 +115,7 @@ export default function App() {
         : e instanceof Error && e.name === 'NotAllowedError' ? 'Capture was declined.'
         : 'Could not start capture.');
     }
-  }, [player, timeline]);
+  }, [player, timeline, sevenths]);
 
   const stopListening = useCallback(async () => {
     listenerRef.current?.stop();
@@ -146,6 +148,7 @@ export default function App() {
       const { samples, sampleRate } = await decode(recording);
       const observations = analyseBuffer(samples, sampleRate, {
         hop: 0.05,
+        support: sevenths ? SEVENTH_FRIENDLY_SUPPORT : undefined,
         toSongTime: (t) => toSongTime(recording.timeMap, t),
       });
       setPasses((p) => mergePasses(p, prune(segmentsFrom(observations, 0.05), 0.25)));
@@ -154,7 +157,7 @@ export default function App() {
     } finally {
       setAnalysing(false);
     }
-  }, [recording]);
+  }, [recording, sevenths]);
 
   const discardRecording = useCallback(() => {
     setRecording((prev) => {
@@ -213,10 +216,23 @@ export default function App() {
             <button className="ghost" onClick={() => startListening('mic')}>
               Listen with microphone
             </button>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={sevenths}
+                onChange={(e) => setSevenths(e.target.checked)}
+              />
+              hear sevenths
+            </label>
             <p className="hint">
               Tab audio: pick this tab in the picker and tick <strong>Also share tab
               audio</strong>. Nothing is uploaded or downloaded — the analysis runs
               here, on the sound as it plays.
+            </p>
+            <p className="hint">
+              <strong>Hear sevenths</strong> finds 7th chords, but mislabels some
+              plain triads as sevenths. Leave it off for pop and rock; turn it on
+              for jazz. Measured either way in the benchmark.
             </p>
           </>
         ) : (

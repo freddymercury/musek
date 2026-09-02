@@ -1,5 +1,8 @@
-import { chromaFromSpectrum, energy, smooth, type Chroma } from '../analysis/chroma';
+import {
+  chromaFromSpectrum, compress, energy, estimateTuning, normalize, smooth, type Chroma,
+} from '../analysis/chroma';
 import { detectChord } from '../analysis/detect';
+import { DEFAULT_GAMMA } from '../analysis/offline';
 import { HOP, type Observation } from '../analysis/timeline';
 import type { AudioSource } from './source';
 
@@ -21,6 +24,11 @@ export interface ListenerOptions {
   onChroma?: (chroma: Chroma) => void;
   /** Below this total chroma energy we assume silence and stay quiet. */
   gate?: number;
+  /**
+   * Evidence an extra note needs before a seventh is believed. Lower it to
+   * hear sevenths at the cost of some triad accuracy.
+   */
+  support?: number;
 }
 
 export interface Listener {
@@ -28,7 +36,7 @@ export interface Listener {
 }
 
 export function listen(source: AudioSource, opts: ListenerOptions): Listener {
-  const { clock, onObservation, onChroma, gate = 0.001 } = opts;
+  const { clock, onObservation, onChroma, gate = 0.001, support } = opts;
 
   const ac = new AudioContext();
   const node = ac.createMediaStreamSource(source.stream);
@@ -42,6 +50,14 @@ export function listen(source: AudioSource, opts: ListenerOptions): Listener {
   const magnitudes = new Float32Array(analyser.frequencyBinCount);
   const recent: Chroma[] = [];
 
+  /**
+   * Running tuning estimate. Offline we take the median over the whole
+   * recording, but live there is no whole recording yet, so votes accumulate
+   * and the estimate settles within the first few seconds.
+   */
+  const tuningVotes: number[] = [];
+  let tuning = 0;
+
   let stopped = false;
 
   const tick = () => {
@@ -53,13 +69,20 @@ export function listen(source: AudioSource, opts: ListenerOptions): Listener {
       magnitudes[i] = spectrumDb[i] > -100 ? Math.pow(10, spectrumDb[i] / 20) : 0;
     }
 
-    const chroma = chromaFromSpectrum(magnitudes, ac.sampleRate, FFT_SIZE);
-    onChroma?.(chroma);
+    const raw = chromaFromSpectrum(magnitudes, ac.sampleRate, FFT_SIZE, tuning);
+    onChroma?.(raw);
 
-    if (energy(chroma) > gate) {
-      recent.push(chroma);
+    if (energy(raw) > gate) {
+      tuningVotes.push(estimateTuning(magnitudes, ac.sampleRate, FFT_SIZE));
+      if (tuningVotes.length > 200) tuningVotes.shift();
+      if (tuningVotes.length > 8) {
+        tuning = [...tuningVotes].sort((a, b) => a - b)[tuningVotes.length >> 1];
+      }
+
+      // Compress after normalising, so gamma means the same at any volume.
+      recent.push(compress(normalize(raw), DEFAULT_GAMMA));
       if (recent.length > WINDOW) recent.shift();
-      const candidate = detectChord(smooth(recent));
+      const candidate = detectChord(smooth(recent), undefined, support);
       if (candidate) onObservation({ time: clock(), candidate });
     } else {
       recent.length = 0;

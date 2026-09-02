@@ -53,6 +53,49 @@ Two other pieces make it work on real songs:
 All the reasoning is in the pure half and covered by tests. The impure modules
 own a device or a clock and make no decisions.
 
+## Accuracy
+
+Chord recognition is measured, not asserted. `npm run bench` renders
+progressions to audio with known ground truth and scores the analyser with
+chord symbol recall, the metric the music-information-retrieval field uses:
+sample estimate and truth on a fine grid, count the fraction of time they
+agree, weighted by duration.
+
+```
+  clean triads     exact  95.9%   root  95.9%
+  + bass           exact  84.7%   root  90.9%
+  + heavy drums    exact  83.1%   root  90.2%
+  full mix         exact  83.5%   root  89.7%
+  detuned 50c      exact  77.2%   root  83.5%
+  fast changes     exact  78.1%   root  85.0%
+```
+
+The benchmark is what found the three things that mattered most, each of
+which had been invisible as a vague sense that captures "seemed off":
+
+1. **One loud voice swamped the chroma.** A bass note two octaves down
+   dominated the vector, so every chord read as a power chord on the right
+   root. Log compression fixed it, and the strength was chosen by sweep -- the
+   value guessed first was 100x too aggressive and scored 13%.
+2. **Every major triad read as a major 7th.** A triad's template is a subset
+   of its seventh's, and the fifth's 5th harmonic lands on the seventh, so the
+   larger template always won.
+3. **Detuning was fatal.** Recordings not at A440 -- common, and deliberate on
+   re-uploads -- scored 0%. Tuning is now estimated from the audio.
+
+These are synthetic signals, so treat them as a floor and a regression
+tripwire rather than a claim about real recordings. Validating against real
+music needs annotated songs; the Isophonics and Billboard corpora are the
+standard sets, and `score()` already computes the right metric for them.
+
+### The sevenths trade-off
+
+Chroma templates cannot do triads and sevenths well at once. The setting that
+gets triads to ~92% drives seventh recall to zero; the setting that recovers
+sevenths costs about thirty points on triads. Rather than pick silently,
+there's a **hear sevenths** toggle. Off by default, since triads dominate
+popular music.
+
 ## Requirements
 
 Tab audio capture needs Chrome or Edge — pick this tab in the share picker and
@@ -69,9 +112,9 @@ npm test
 
 ## Known limits
 
-- Chord detection is solid; individual melody notes under a dense mix are not
-  attempted yet.
-- Heavily distorted or percussion-dominated material confuses the chroma.
+- Individual melody notes under a dense mix are not attempted yet.
+- Sevenths and triads trade off against each other; see above.
+- Numbers above are from synthetic audio. Real recordings will be worse.
 - A Chrome extension using `chrome.tabCapture` would remove the share-picker
   step and work on embed-restricted videos. `captureViaExtension()` in
   `src/capture/source.ts` is the seam for it.

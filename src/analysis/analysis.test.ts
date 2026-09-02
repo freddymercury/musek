@@ -4,7 +4,9 @@ import { chord } from '../theory/chords';
 import {
   chromaFromSpectrum, chromaOf, normalize, smooth, cosineSimilarity, energy, CHROMA_LENGTH,
 } from './chroma';
-import { detectChord, detectChords, detectKeys, detectScale, fitsKey } from './detect';
+import {
+  detectChord, detectChords, detectKeys, detectScale, fitsKey, SEVENTH_FRIENDLY_SUPPORT,
+} from './detect';
 import {
   segmentsFrom, prune, observe, mergePasses, chordAt, histogram, heardFor,
   commonProgression, changesPerMinute, emptyTimeline, HOP, type Observation,
@@ -107,8 +109,23 @@ describe('chord detection', () => {
     expect(detectChord(chromaOfNotes(['A3', 'C4', 'E4']))?.symbol).toBe('Am');
   });
 
-  it('recognises a dominant 7th', () => {
-    expect(detectChord(chromaOfNotes(['G3', 'B3', 'D4', 'F4']))?.symbol).toBe('G7');
+  it('reads a dominant 7th as its triad by default', () => {
+    // Documented trade-off: the default favours triads, because a triad's
+    // template is a subset of its seventh's and real instruments produce
+    // enough harmonic leakage to match the larger template. See the
+    // benchmark in src/testing -- favouring sevenths costs ~30 points on
+    // triads, which dominate most popular music.
+    expect(detectChord(chromaOfNotes(['G3', 'B3', 'D4', 'F4']))?.symbol).toBe('G');
+  });
+
+  it('recognises a dominant 7th when asked to hear sevenths', () => {
+    const chroma = chromaOfNotes(['G3', 'B3', 'D4', 'F4']);
+    expect(detectChord(chroma, undefined, SEVENTH_FRIENDLY_SUPPORT)?.symbol).toBe('G7');
+  });
+
+  it('still hears a plain triad as a triad in seventh-friendly mode', () => {
+    const chroma = chromaOfNotes(['C4', 'E4', 'G4']);
+    expect(detectChord(chroma, undefined, SEVENTH_FRIENDLY_SUPPORT)?.root).toBe(0);
   });
 
   it('recognises chords regardless of inversion', () => {
