@@ -32,14 +32,20 @@ Two other pieces make it work on real songs:
 - **A pure timeline.** Observations fold into segments through functions that
   take state and return state. Merging passes, pruning noise, and finding the
   loop are all folds over data, which is why they're straightforward to test.
+- **Captures are kept.** Every listening session is recorded, so you can play
+  back exactly what the analyser heard — and re-read it offline. The offline
+  pass owns its own FFT, so it sees every sample at whatever hop we ask for
+  instead of whatever frames the event loop happened to deliver. It's a pure
+  function from samples to observations, and it merges into the timeline as
+  another pass rather than replacing it.
 
 ## Layout
 
 | Path | What lives there | Pure? |
 | --- | --- | --- |
 | `src/theory/` | Pitch, intervals, scales, modes, chords, diatonic harmony | yes |
-| `src/analysis/` | Chroma, chord/key detection, timeline reducers | yes |
-| `src/capture/` | Audio sources and the listening loop | no |
+| `src/analysis/` | Chroma, FFT, chord/key detection, timeline, time mapping | yes |
+| `src/capture/` | Audio sources, the listening loop, recording | no |
 | `src/audio/` | Web Audio playback | no |
 | `src/youtube/` | IFrame player handle | no |
 | `src/ui/` | React components | no |

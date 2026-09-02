@@ -2,17 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPlayer, parseVideoId, type PlayerHandle } from './youtube/player';
 import { captureMic, captureTab, supportsTabAudio, CaptureError, type AudioSource } from './capture/source';
 import { listen, type Listener } from './capture/listener';
+import { record, decode, type Recorder, type Recording } from './capture/recorder';
+import { analyseBuffer } from './analysis/offline';
+import { toSongTime, toRecordingTime } from './analysis/timemap';
 import { detectKeys, type KeyCandidate } from './analysis/detect';
 import { smooth, type Chroma } from './analysis/chroma';
 import {
   emptyTimeline, observe, prune, mergePasses, commonProgression, changesPerMinute,
-  chordAt, type TimelineState, type Segment,
+  chordAt, segmentsFrom, type TimelineState, type Segment,
 } from './analysis/timeline';
 import { diatonicChords } from './theory/chords';
 import { ChromaBars } from './ui/ChromaBars';
 import { ChordTable } from './ui/ChordTable';
 import { Timeline } from './ui/Timeline';
 import { KeyExplorer } from './ui/KeyExplorer';
+import { Playback } from './ui/Playback';
 import './App.css';
 
 export default function App() {
@@ -28,8 +32,13 @@ export default function App() {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  const [recording, setRecording] = useState<Recording | null>(null);
+  const [analysing, setAnalysing] = useState(false);
+  const [seekToSong, setSeekToSong] = useState<number | null>(null);
+
   const mountRef = useRef<HTMLDivElement>(null);
   const listenerRef = useRef<Listener | null>(null);
+  const recorderRef = useRef<Recorder | null>(null);
   const chromaSumRef = useRef<Chroma[]>([]);
 
   /** Merged view of every pass so far -- the timeline the UI actually shows. */
@@ -85,6 +94,8 @@ export default function App() {
       const t0 = performance.now();
       const clock = () => (player ? player.currentTime() : (performance.now() - t0) / 1000);
 
+      recorderRef.current = record(src.stream, { clock, label: src.label });
+
       listenerRef.current = listen(src, {
         clock,
         onObservation: (obs) => setTimeline((st) => observe(st, obs)),
@@ -96,7 +107,7 @@ export default function App() {
         },
       });
 
-      src.stream.getAudioTracks()[0]?.addEventListener('ended', () => stopListening());
+      src.stream.getAudioTracks()[0]?.addEventListener('ended', () => void stopListening());
     } catch (e) {
       setError(e instanceof CaptureError ? e.message
         : e instanceof Error && e.name === 'NotAllowedError' ? 'Capture was declined.'
@@ -104,13 +115,53 @@ export default function App() {
     }
   }, [player, timeline]);
 
-  const stopListening = useCallback(() => {
+  const stopListening = useCallback(async () => {
     listenerRef.current?.stop();
     listenerRef.current = null;
+
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    if (rec) {
+      const finished = await rec.stop();
+      // Revoke the previous capture's URL before replacing it.
+      setRecording((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return finished.duration > 0.5 ? finished : null;
+      });
+    }
+
     source?.stop();
     setSource(null);
     setChroma(null);
   }, [source]);
+
+  /**
+   * Re-read the capture offline. Every sample, a finer hop, and no event loop
+   * in the way -- then merged into the timeline as another pass.
+   */
+  const reanalyse = useCallback(async () => {
+    if (!recording) return;
+    setAnalysing(true);
+    try {
+      const { samples, sampleRate } = await decode(recording);
+      const observations = analyseBuffer(samples, sampleRate, {
+        hop: 0.05,
+        toSongTime: (t) => toSongTime(recording.timeMap, t),
+      });
+      setPasses((p) => mergePasses(p, prune(segmentsFrom(observations, 0.05), 0.25)));
+    } catch {
+      setError('Could not decode that capture.');
+    } finally {
+      setAnalysing(false);
+    }
+  }, [recording]);
+
+  const discardRecording = useCallback(() => {
+    setRecording((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }, []);
 
   useEffect(() => () => { listenerRef.current?.stop(); }, []);
 
@@ -170,7 +221,7 @@ export default function App() {
           </>
         ) : (
           <>
-            <button className="stop" onClick={stopListening}>Stop listening</button>
+            <button className="stop" onClick={() => void stopListening()}>Stop listening</button>
             <span className="listening">● listening to {source.label}</span>
           </>
         )}
@@ -184,6 +235,17 @@ export default function App() {
           </div>
           <ChromaBars chroma={chroma} />
         </section>
+      )}
+
+      {recording && !source && (
+        <Playback
+          recording={recording}
+          analysing={analysing}
+          seekToSong={seekToSong}
+          onPosition={setPosition}
+          onReanalyse={reanalyse}
+          onDiscard={discardRecording}
+        />
       )}
 
       {segments.length > 0 && (
@@ -211,7 +273,14 @@ export default function App() {
             segments={segments}
             duration={duration}
             position={position}
-            onSeek={(s) => player?.seek(s)}
+            onSeek={(songTime) => {
+              player?.seek(songTime);
+              if (recording) {
+                const at = toRecordingTime(recording.timeMap, songTime);
+                if (at !== null) setSeekToSong(at);
+              }
+              setPosition(songTime);
+            }}
           />
 
           <ChordTable
