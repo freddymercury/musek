@@ -53,6 +53,46 @@ Two other pieces make it work on real songs:
 All the reasoning is in the pure half and covered by tests. The impure modules
 own a device or a clock and make no decisions.
 
+## Rebuilding the tone
+
+A chord symbol keeps three or four pitch classes and throws away everything
+else, so playing one back on a generic wave can never sound like the record
+however accurate the label is.
+
+**Rebuild the tone** does the other thing. The capture is decomposed into the
+sine waves it is actually made of -- frequency and amplitude tracked over
+time -- and played back from those alone, no chord labels involved. This is
+the article's opening premise run in reverse: if a sound is a sum of
+harmonics, and timbre is the recipe of those harmonics, then measuring the
+recipe should give the tone back.
+
+Measured as spectral distance against the original:
+
+```
+  pure sine            -31.5 dB
+  sawtooth-ish         -29.4 dB
+  square-ish           -28.4 dB
+  low note             -27.8 dB
+  high note            -30.2 dB
+  chord progression    -14.6 dB
+  full mix + drums     -14.4 dB
+```
+
+Single tones come back very close. Dense mixes are limited by what sinusoids
+can represent at all: a drum hit is broadband noise, not a sum of steady
+partials, so it is the transients that resist. Modelling those properly means
+splitting the signal into sines, noise and transients separately.
+
+Two details carry most of the quality. Peak frequencies are refined by
+parabolic interpolation, because an FFT bin is wider than a semitone at the
+bottom of the piano and taking the bin centre detunes everything. And phase
+runs continuously across frames -- restarting it each hop would put a click
+in the output 86 times a second.
+
+The app also names the timbre it measured. A sine, triangle, square and
+sawtooth differ only in how much of each overtone they contain, so comparing
+a recording's measured recipe against those four says which it most resembles.
+
 ## Playing the analysis
 
 The fastest way to judge a transcription is to hear it. **Play the analysis**
