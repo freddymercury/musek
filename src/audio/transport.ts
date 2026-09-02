@@ -66,12 +66,28 @@ export function play(events: readonly Event[], opts: TransportOptions = {}): Tra
   master.gain.value = 1;
   master.connect(ac.destination);
 
+  /**
+   * Where playback begins, in song time.
+   *
+   * Events are stamped in song time, so a capture that started two minutes
+   * into a track has its first chord at t=120. Scheduling that at face value
+   * meant waiting two minutes in silence -- the whole arrangement played,
+   * just far in the future, with nothing to indicate anything was wrong.
+   *
+   * "From the start" therefore means the first chord we detected, not song
+   * time zero. An explicit position is honoured as given.
+   */
+  const origin = from > 0
+    ? from
+    : events.reduce((min, e) => Math.min(min, e.time), Infinity);
+  const start0 = isFinite(origin) ? origin : 0;
+
   const t0 = ac.currentTime + 0.08; // a beat of headroom to schedule into
   let last = 0;
 
   for (const e of events) {
-    const start = t0 + Math.max(0, e.time - from);
-    if (e.time + e.duration <= from) continue;
+    if (e.time + e.duration <= start0) continue;
+    const start = t0 + Math.max(0, e.time - start0);
 
     const level = gain * (0.5 + 0.5 * Math.min(1, e.confidence));
     for (const note of e.notes) {
@@ -80,17 +96,17 @@ export function play(events: readonly Event[], opts: TransportOptions = {}): Tra
     if (bass) {
       voiceAt(ac, master, e.root + 36, start, e.duration, level * 0.8, 'sine');
     }
-    last = Math.max(last, e.time + e.duration - from);
+    last = Math.max(last, e.time + e.duration - start0);
   }
 
   let stopped = false;
-  const tick = window.setInterval(() => {
+  const tick = setInterval(() => {
     if (stopped) return;
     const at = ac.currentTime - t0;
-    onPosition?.(from + Math.max(0, at));
+    onPosition?.(start0 + Math.max(0, at));
     if (at >= last) {
       stopped = true;
-      window.clearInterval(tick);
+      clearInterval(tick);
       onEnd?.();
     }
   }, 60);
@@ -99,7 +115,7 @@ export function play(events: readonly Event[], opts: TransportOptions = {}): Tra
     stop() {
       if (stopped) return;
       stopped = true;
-      window.clearInterval(tick);
+      clearInterval(tick);
       // Ramp the master down rather than cutting, which would click.
       master.gain.setValueAtTime(master.gain.value, ac.currentTime);
       master.gain.linearRampToValueAtTime(0.0001, ac.currentTime + 0.05);
@@ -107,7 +123,7 @@ export function play(events: readonly Event[], opts: TransportOptions = {}): Tra
       onEnd?.();
     },
     position() {
-      return from + Math.max(0, ac.currentTime - t0);
+      return start0 + Math.max(0, ac.currentTime - t0);
     },
   };
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { arrange, arrangementLength, type Event } from '../analysis/arrange';
 import type { Segment } from '../analysis/timeline';
 import { play, type Transport } from '../audio/transport';
+import { playChord } from '../audio/synth';
 
 interface Props {
   segments: readonly Segment[];
@@ -58,7 +59,15 @@ export function AnalysisPlayer({ segments, position, onPosition }: Props) {
 
   // Never leave oscillators running behind a closed panel.
   useEffect(() => stop, [stop]);
-  useEffect(() => { if (playing) stop(); }, [events]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Deliberately not stopping when `events` changes.
+   *
+   * play() schedules the whole arrangement upfront against the audio clock,
+   * so a later change cannot affect what is already sounding. Stopping on
+   * every change silenced playback instantly during a live capture, where
+   * the timeline updates ten times a second -- no sound, and no error.
+   */
 
   if (!events.length) return null;
 
@@ -93,6 +102,14 @@ export function AnalysisPlayer({ segments, position, onPosition }: Props) {
           />
           confident chords only
         </label>
+
+        <button
+          className="ghost"
+          onClick={() => playChord([60, 64, 67])}
+          title="If this is silent, the problem is audio output rather than the analysis"
+        >
+          Test tone
+        </button>
       </div>
 
       <p className="hint">

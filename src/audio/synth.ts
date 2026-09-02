@@ -7,6 +7,11 @@ import { midiToFreq } from '../theory/pitch';
 
 let ctx: AudioContext | null = null;
 
+/** Drop the cached context, so tests can install a fake one. */
+export function resetAudioContext(): void {
+  ctx = null;
+}
+
 /** Browsers require a user gesture before audio starts. */
 export function audioContext(): AudioContext {
   if (!ctx) ctx = new AudioContext();
