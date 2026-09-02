@@ -17,6 +17,7 @@ import { ChordTable } from './ui/ChordTable';
 import { Timeline } from './ui/Timeline';
 import { KeyExplorer } from './ui/KeyExplorer';
 import { Playback } from './ui/Playback';
+import { AnalysisPlayer } from './ui/AnalysisPlayer';
 import './App.css';
 
 export default function App() {
@@ -297,6 +298,12 @@ export default function App() {
               }
               setPosition(songTime);
             }}
+          />
+
+          <AnalysisPlayer
+            segments={segments}
+            position={position}
+            onPosition={setPosition}
           />
 
           <ChordTable

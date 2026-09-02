@@ -150,3 +150,15 @@ footer a { color: var(--accent); }
 }
 .button-link:hover { border-color: var(--accent); }
 .playback .hint { margin-top: 10px; }
+
+.analysis-player {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 18px; margin: 20px 0;
+}
+.ap-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.ap-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ap-controls .check {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--dim);
+}
+.analysis-player .hint { margin-top: 10px; }

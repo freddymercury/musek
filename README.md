@@ -53,6 +53,20 @@ Two other pieces make it work on real songs:
 All the reasoning is in the pure half and covered by tests. The impure modules
 own a device or a clock and make no decisions.
 
+## Playing the analysis
+
+The fastest way to judge a transcription is to hear it. **Play the analysis**
+sounds the detected chords back as music, and playing that over the original
+tells you in about four bars where the two part company.
+
+Chords are voiced for smooth voice leading rather than stacked in root
+position, so the progression moves the way a player would move, and each
+chord is sounded at a volume tracking the analyser's confidence -- a chord it
+already doubted sounds faint rather than confidently wrong.
+
+Scheduling is against the AudioContext clock, not setTimeout, since timer
+jitter is audible as sloppy timing.
+
 ## Accuracy
 
 Chord recognition is measured, not asserted. `npm run bench` renders
