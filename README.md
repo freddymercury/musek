@@ -266,6 +266,137 @@ is broken" from "the analysis is wrong" in one click.
 
 ---
 
+# Also in here: Sit in Traffic
+
+A second, entirely unrelated app lives at `/traffic.html`: a game about
+driving to the arena through rush hour without hitting anything and without
+breaking a single rule.
+
+You are late for a show. The car park is 2.6 km away, the doors close in
+3:48, and between you and Row D seat 14 there is a queue, three sets of
+lights, a lane closed for resurfacing, and several hundred people who are
+also going. Pick a car, get there first, and get there legally.
+
+```
+↑ W  throttle      ← →  change lane      Q E  indicators      Esc  pause
+↓ S  brake
+```
+
+## The one idea
+
+Time is the score, so every rule has to cost time, and **no violation can
+ever be worth committing**. That is not a vibe, it is arithmetic.
+
+Cover distance `d` at `v` where the limit is `L` and you save
+`d/L - d/v = d(v-L)/(Lv)` seconds. Charge the fine at `K(v-L)/L` seconds per
+second and over that distance you pay `K · d(v-L)/(Lv)` — exactly **K times
+what you saved**. With `K = 1.5` speeding strictly loses, for every speed,
+every distance, and every limit. `speedingNeverPays` in `rules.test.ts` is
+that sentence as a test.
+
+The same test applies to the rest: running a red costs 20 s and the longest
+red on the route is 13 s; skipping the indicator costs 5 s and saves the 0.4 s
+the law asks you to wait. Every fine is provably larger than the shortcut it
+buys.
+
+## Why obeying the limit is the fast line
+
+The lights are timed as a **green wave**: their offsets are computed from
+`paceTo()`, the arrival time of a driver who clears the opening queue and then
+sits on the limit. Hold the limit and every light opens a few seconds before
+you get there. Hurry and you arrive early, into a red, and watch the traffic
+you overtook queue up behind you.
+
+Two tests hold that in place — `hold the limit and every light is green when
+you get there`, and `arrive early, because you hurried, and it is red`. If
+either ever failed, speeding would quietly have become optimal.
+
+## The traffic is not scripted
+
+Every AI car runs the Intelligent Driver Model: accelerate towards the speed
+you want, back off as the gap to the car in front closes.
+
+```
+dv/dt = a[1 - (v/v0)^4 - (want/gap)^2]
+```
+
+Jams come out of that on their own. One van that wants 34 km/h in a 50 grows
+a queue behind it without anyone deciding there should be a queue, and the
+queue then propagates backwards the way real ones do. Lorries live in the
+nearside lane, the offside runs thinner and faster, and which lane is moving
+is therefore a thing you can read — a scripted jam is an obstacle, an
+emergent one is traffic.
+
+Three details took the most work:
+
+**Drivers want a fraction of the limit, not a fixed speed.** Storing an
+absolute desired speed meant a dawdler doing 30 km/h downtown was still doing
+30 on a 100 km/h expressway, and walled the fast road with city traffic.
+
+**Two cars will read the same gap in the same frame and both take it.** Lane
+changes are now decided in order against a list of claims, which took
+AI-on-AI overlaps from 95 over a run to zero.
+
+**The AI is not allowed to hit you.** It treats the player as an obstacle in
+both the lane it is in and the lane it is moving into, and refuses to merge
+anywhere near it. Every collision in the game is therefore the player's,
+which is the only way "no collisions" is a fair thing to score somebody on.
+
+## Is par actually reachable?
+
+A target nobody can hit without speeding is not a challenge, it is an
+instruction to speed — so the game ships with a driver that obeys every rule
+in the book, and the tests make it drive.
+
+`autopilot.ts` takes a `dash` dial from patient (0) to as assertive as the law
+allows (1), and never buys a second by breaking a rule. On race-day traffic:
+
+```
+  every car, patient, clean            215-223 s      par 228
+  everyday car, assertive, clean           193 s
+  worst car on the worst shuffled road     236 s      still a medal
+```
+
+So every car in the garage can beat par without a single violation, and
+driving well is worth about thirty seconds on top. Both are assertions, not
+observations: `route.test.ts` fails if a car stops being able to make it, if
+skill stops paying, or if anything crashes.
+
+## The garage
+
+| Car | Its case |
+| --- | --- |
+| Commuter Hatchback | The average of the others, in every stat |
+| Electric Sedan | Torque from rest — the queue is where it wins |
+| Sports Coupe | Quickest here; sits so low it sees almost nothing |
+| Vintage Roadster | Short and nimble, fits gaps nothing else fits |
+| Delivery Van | Slow and awkward, but sees the whole jam coming |
+
+Top speed barely matters when the limit is the limit, so the cars separate on
+acceleration out of the queue, on how fast they cross a lane, and on how far
+up the road their radar reads. The van is the only one whose sight line
+reaches 300 m, which is its entire compensation for being the van.
+
+## Where it lives
+
+| Path | What | Pure? |
+| --- | --- | --- |
+| `src/traffic/cars.ts` | The garage | yes |
+| `src/traffic/route.ts` | Zones, lights, closures, the green wave | yes |
+| `src/traffic/rules.ts` | The law and what breaking it costs | yes |
+| `src/traffic/sim.ts` | Physics, traffic, collisions — `step(sim, input, dt)` | yes |
+| `src/traffic/autopilot.ts` | The law-abiding driver | yes |
+| `src/traffic/render.ts` | Canvas drawing | reads only |
+| `src/traffic/ui/` | React screens | no |
+
+Same rule as next door: everything that decides anything is pure. `step()`
+takes a world and returns the next one, which is why the tests can drive
+thousands of runs a second with no canvas anywhere, why physics runs on a
+fixed 1/60 step so the same drive scores the same on a 144 Hz monitor, and
+why the menu can quietly run the game behind itself.
+
+---
+
 ## Requirements
 
 Tab audio capture needs Chrome or Edge — pick this tab in the share picker
@@ -276,8 +407,8 @@ microphone, which works fine for chord detection.
 
 ```
 npm install
-npm run dev      # http://localhost:5173
-npm test         # 207 tests
+npm run dev      # musek at /, the traffic game at /traffic.html
+npm test         # 234 tests
 npm run bench    # accuracy benchmark and parameter sweeps
 ```
 
