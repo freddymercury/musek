@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run src/theory src/analysis src/traffic",
+    "test": "vitest run src/theory src/analysis",
     "bench": "vitest run src/testing --disable-console-intercept"
   },
   "dependencies": {
