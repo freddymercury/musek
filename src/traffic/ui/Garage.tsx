@@ -3,7 +3,7 @@ import { CARS, kmh, type CarSpec } from '../cars';
 import { ARENA_ROUTE } from '../route';
 import { createSim, step, type Sim } from '../sim';
 import { AUTO_START, autopilot } from '../autopilot';
-import { draw } from '../render';
+import { drawChase } from '../chase';
 import { clock, minutes } from './format';
 
 const STEP = 1 / 60;
@@ -42,7 +42,7 @@ function Attract({ car }: { car: CarSpec }) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      draw(ctx, sim, w, h, 0.62);
+      drawChase(ctx, sim, w, h);
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -134,6 +134,7 @@ export function Garage({ bests, onDrive }: {
         <div><kbd>↓</kbd><kbd>S</kbd> brake</div>
         <div><kbd>←</kbd><kbd>→</kbd> change lane</div>
         <div><kbd>Q</kbd><kbd>E</kbd> indicators</div>
+        <div><kbd>V</kbd> chase / map view</div>
         <div><kbd>Esc</kbd> pause</div>
       </div>
 

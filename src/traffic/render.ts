@@ -207,6 +207,27 @@ function drawOncoming(ctx: CanvasRenderingContext2D, sim: Sim, v: View): void {
 function drawWorks(ctx: CanvasRenderingContext2D, sim: Sim, v: View): void {
   for (const w of sim.route.works) {
     if (w.to < v.from || w.from > v.to) continue;
+
+    if (w.kind === 'stalled') {
+      const cx = sx(v, laneX(w.lane));
+      const len = (w.to - w.from) * v.ppm;
+      ctx.fillStyle = '#767f92';
+      roundRect(ctx, cx - 0.95 * v.ppm, sy(v, w.to), 1.9 * v.ppm, len, 3);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(12,16,24,0.55)';
+      roundRect(ctx, cx - 0.68 * v.ppm, sy(v, w.to - (w.to - w.from) * 0.35), 1.36 * v.ppm, len * 0.3, 2);
+      ctx.fill();
+      if (Math.floor(sim.t * 1.6) % 2 === 0) {
+        ctx.fillStyle = '#f0b866';
+        ctx.shadowColor = '#f0b866';
+        ctx.shadowBlur = 12;
+        ctx.fillRect(cx - 0.95 * v.ppm, sy(v, w.from) - 4, 0.4 * v.ppm, 3);
+        ctx.fillRect(cx + 0.55 * v.ppm, sy(v, w.from) - 4, 0.4 * v.ppm, 3);
+        ctx.shadowBlur = 0;
+      }
+      continue;
+    }
+
     const x0 = sx(v, laneX(w.lane) - LANE_WIDTH / 2);
     const wid = LANE_WIDTH * v.ppm;
     const yTop = sy(v, w.to);

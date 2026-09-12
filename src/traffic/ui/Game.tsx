@@ -3,6 +3,7 @@ import type { CarSpec } from '../cars';
 import { ARENA_ROUTE } from '../route';
 import { NO_INPUT, createSim, step, type Input, type Sim } from '../sim';
 import { draw, drawRadar } from '../render';
+import { drawChase } from '../chase';
 import { Hud } from './Hud';
 
 /**
@@ -33,6 +34,9 @@ export function Game({ car, seed, onFinish }: {
   const done = useRef(false);
   const [paused, setPaused] = useState(false);
   const [lights, setLights] = useState(3);
+  // Behind the bumper by default; the map view is still there for anyone who
+  // wants to read the whole road at once.
+  const [chase, setChase] = useState(true);
 
   const pauseToggle = useCallback(() => setPaused((p) => !p), []);
 
@@ -46,6 +50,7 @@ export function Game({ car, seed, onFinish }: {
       else if (code === 'ArrowRight' || code === 'KeyD') queued.current.push({ move: 1, toggle: 0 });
       else if (code === 'KeyQ') queued.current.push({ move: 0, toggle: -1 });
       else if (code === 'KeyE') queued.current.push({ move: 0, toggle: 1 });
+      else if (code === 'KeyV') setChase((c) => !c);
       else if (code === 'Escape' || code === 'KeyP') pauseToggle();
     };
     const up = (e: KeyboardEvent): void => { held.current.delete(e.code); };
@@ -122,7 +127,7 @@ export function Game({ car, seed, onFinish }: {
       if (canvas) {
         const [w, h] = fit(canvas);
         const ctx = canvas.getContext('2d');
-        if (ctx) draw(ctx, simRef.current, w, h);
+        if (ctx) (chase ? drawChase : draw)(ctx, simRef.current, w, h);
       }
       const radar = radarRef.current;
       if (radar) {
@@ -134,7 +139,7 @@ export function Game({ car, seed, onFinish }: {
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [paused, lights, onFinish]);
+  }, [paused, lights, chase, onFinish]);
 
   const tap = useCallback((input: Pick<Input, 'move' | 'toggle'>) => {
     queued.current.push({ ...NO_INPUT, ...input });

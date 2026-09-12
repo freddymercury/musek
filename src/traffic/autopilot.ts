@@ -25,6 +25,26 @@ export interface AutoState {
 
 export const AUTO_START: AutoState = { intent: 0, cooldown: 0 };
 
+/**
+ * What a lane looks like for as far as this car can see: the speed the traffic
+ * in it is actually doing. This is the thing a jam is for -- from inside a
+ * queue the only move available is picking the half of it that is moving, and
+ * a driver who cannot see past their own bonnet cannot make it.
+ */
+function outlook(sim: Sim, lane: number): number {
+  const from = sim.player.s;
+  const to = from + sim.car.lookahead;
+  if (sim.route.works.some((w) => w.lane === lane && w.to > from && w.from < to)) return -1;
+  let sum = 0;
+  let n = 0;
+  for (const veh of sim.traffic) {
+    if (veh.lane !== lane || veh.s < from || veh.s > to) continue;
+    sum += veh.v;
+    n += 1;
+  }
+  return n === 0 ? Infinity : sum / n;
+}
+
 /** Fastest you can be going `d` metres before a stop line and still stop in comfort. */
 const stopSpeed = (d: number, brake: number): number => Math.sqrt(Math.max(0, 2 * brake * 0.5 * (d - 3)));
 
@@ -43,13 +63,18 @@ function followSpeed(gap: number, leadV: number, v: number, margin: number): num
  * (1): shorter gaps, smaller holes taken, quicker to decide a lane is slow. It
  * never buys a second by breaking a rule -- that is the point of the dial.
  */
-export function autopilot(sim: Sim, mem: AutoState, dt: number, dash = 0): { input: Input; mem: AutoState } {
+export function autopilot(
+  sim: Sim, mem: AutoState, dt: number, dash = 0, overspeed = 1,
+): { input: Input; mem: AutoState } {
   const { route, car, player } = sim;
   const limit = limitAt(route, player.s);
   const scans = scanLanes(sim);
   const here = scans[player.lane];
   // Half a metre under the limit: the fine starts the instant you are over it.
-  const free = Math.max(3, limit - 0.5);
+  // `overspeed` above 1 is a driver who does not care, which exists so the
+  // tests can put the central claim of the scoring -- that it never pays --
+  // to an actual drive rather than to the arithmetic alone.
+  const free = Math.max(3, limit * overspeed - 0.5);
   let want = free;
 
   if (here.lead) {
@@ -110,14 +135,19 @@ export function autopilot(sim: Sim, mem: AutoState, dt: number, dash = 0): { inp
       // Judged against the free speed, not the speed this queue is allowing:
       // comparing with `want` asks "am I slower than I am?" and never fires.
       const stuck = here.lead !== null && here.lead.gap < 70 + 50 * dash && here.lead.v < free - (2.5 - 1.5 * dash);
-      if (urgent || stuck) {
+      // Reading the road only happens with the dial up, and it is the whole
+      // difference between driving and queueing: from inside a jam the only
+      // move available is picking the half of it that is moving.
+      const mine = dash > 0 ? outlook(sim, player.lane) : Infinity;
+      if (urgent || stuck || dash > 0) {
         for (const dir of [-1, 1] as const) {
           const lane = player.lane + dir;
           if (!roomFor(lane, urgent)) continue;
           const other = scans[lane];
           const gain = (other.lead ? Math.min(free, other.lead.v + other.lead.gap / 16) : free)
             - (here.lead ? Math.min(free, here.lead.v + here.lead.gap / 16) : free);
-          if (urgent || gain > 2 - 1.3 * dash) {
+          const reads = dash > 0 && outlook(sim, lane) > mine + 2.5 / dash;
+          if (urgent || (stuck && gain > 2 - 1.3 * dash) || reads) {
             intent = dir;
             break;
           }

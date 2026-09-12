@@ -269,47 +269,115 @@ is broken" from "the analysis is wrong" in one click.
 # Also in here: Sit in Traffic
 
 A second, entirely unrelated app lives at `/traffic.html`: a game about
-driving to the arena through rush hour without hitting anything and without
-breaking a single rule.
+driving to the arena through rush hour, from behind your own back bumper,
+without hitting anything and without breaking a single rule.
 
-You are late for a show. The car park is 2.6 km away, the doors close in
-3:48, and between you and Row D seat 14 there is a queue, three sets of
-lights, a lane closed for resurfacing, and several hundred people who are
-also going. Pick a car, get there first, and get there legally.
+You are late for a show. The car park is 2.4 km away, the doors close in
+3:48, and the first thing you see is the boot of the car in front. Between
+you and Row D seat 14 there is a queue that is not going anywhere, three sets
+of lights, a lane closed for resurfacing, somebody broken down in lane three,
+and several hundred people who are also going.
 
 ```
-↑ W  throttle      ← →  change lane      Q E  indicators      Esc  pause
-↓ S  brake
+↑ W  throttle      ← →  change lane      Q E  indicators
+↓ S  brake         V    chase / map      Esc  pause
 ```
 
 ## The one idea
 
-Time is the score, so every rule has to cost time, and **no violation can
-ever be worth committing**. That is not a vibe, it is arithmetic.
+Time is the score, so every rule has to cost time, and **no violation can be
+worth committing**. That is not a vibe, it is arithmetic.
 
 Cover distance `d` at `v` where the limit is `L` and you save
 `d/L - d/v = d(v-L)/(Lv)` seconds. Charge the fine at `K(v-L)/L` seconds per
 second and over that distance you pay `K · d(v-L)/(Lv)` — exactly **K times
-what you saved**. With `K = 1.5` speeding strictly loses, for every speed,
-every distance, and every limit. `speedingNeverPays` in `rules.test.ts` is
-that sentence as a test.
+what you saved**, for every speed, every distance and every limit.
+`speedingNeverPays` in `rules.test.ts` is that sentence as a test.
 
-The same test applies to the rest: running a red costs 20 s and the longest
-red on the route is 13 s; skipping the indicator costs 5 s and saves the 0.4 s
-the law asks you to wait. Every fine is provably larger than the shortcut it
-buys.
+`K` started at 1.5 and the road disagreed. A route with lights on it has a
+second term the fine cannot see: hurry to a light and you sometimes catch a
+green you would otherwise have sat at, which is worth a whole cycle and costs
+nothing. Driven end to end, 25% over the limit everywhere came out *4 seconds
+ahead*. At `K = 3` the fine is bigger than the light:
+
+```
+                          driving    fines    into the seat
+  race day, lawful         204.5 s    none       204.5 s
+  the same driver, +15%    197.9 s    10.8       208.7 s
+  the same driver, +25%    197.8 s    19.2       217.0 s
+  the same driver, +50%    197.8 s    29.0       226.7 s
+```
+
+Every one of those is genuinely faster *driving* and later *arriving*, which
+is the whole design in four lines. `the same driver, speeding, arrives later`
+drives all four every time the suite runs.
+
+The flat fines are sized the same way: running a red costs 20 s and the
+longest red on the route is 13 s; skipping the indicator costs 5 s and saves
+the 0.4 s the law asks you to wait.
+
+## Sitting in traffic
+
+The name is the feature. Two stretches of the route are properly bumper to
+bumper — the queue you start in and the crawl up to the gate — at about 95
+vehicles per kilometre per lane. On race day that opening queue is 25 cars
+with a median gap of **5.7 metres**, moving at 16 km/h when it moves at all,
+and the first of them is directly in front of you before you have touched
+anything.
+
+A jam is only worth sitting in if it ends, so they are stretches rather than
+the whole road: 270 of the 2400 metres are solid, which works out at about a
+fifth of the run spent inside one. `sitting in traffic` in `sim.test.ts`
+asserts both halves — median gap under nine metres in the opening queue, and
+under a fifth of the route dense enough to qualify.
+
+Three things make a queue something you can be *in* rather than something you
+wait out:
+
+**Lanes are not interchangeable.** The nearside carries the lorries and the
+people who are not in a hurry. On top of that each stretch shuffles its own
+mix, so which lane is the good one differs from jam to jam and has to be read
+rather than remembered.
+
+**Things are broken down in it.** Two of the four blockages on the route are
+not roadworks but somebody's morning going wrong, hazards going, sat in a
+live lane inside a jam. The simulation treats a breakdown and a coned-off
+lane identically — a lane that is not there — and only the renderer knows the
+difference.
+
+**Somebody has to let you in.** A closed lane in solid traffic has no gaps in
+it by definition, and a merge model that waits for one deadlocks: the lane
+stops forever, everything behind it stops forever, and the route cannot be
+finished at all. That was the actual first behaviour. Drivers now zip — cones
+in sight, crawling, nowhere to go, take what is there — and `a lane blocked
+inside a jam still drains` follows seventeen specific cars past a breakdown to
+prove it.
+
+### What the jams did to the measurements
+
+Worth writing down because it was not the expected result: **once the traffic
+is dense, lane-hopping stops paying.** The autopilot has a dial from patient
+to as assertive as the law allows, including reading the average speed of
+every lane as far ahead as the car can see. Across eight roads it came out
+*1.7 seconds slower on average* — 11 seconds better on one road, 23 seconds
+worse on another, and inside a second either way on the rest.
+
+Anyone who has changed lanes in a jam and then watched the lane they left
+pull away already knows this. It is the real behaviour of congested traffic
+rather than a bug, so par is set against the patient driver, and the honest
+edge on offer is elsewhere: the green wave, the car you picked, getting away
+from the lights cleanly, and not hitting anything.
 
 ## Why obeying the limit is the fast line
 
-The lights are timed as a **green wave**: their offsets are computed from
-`paceTo()`, the arrival time of a driver who clears the opening queue and then
-sits on the limit. Hold the limit and every light opens a few seconds before
-you get there. Hurry and you arrive early, into a red, and watch the traffic
-you overtook queue up behind you.
+The lights are timed as a **green wave**: their offsets come from `paceTo()`,
+the arrival time of a driver who clears the opening queue and then sits on
+the limit. Hold the limit and every light opens a few seconds before you get
+there. Hurry and you arrive early, into a red, and watch the traffic you
+overtook queue up behind you.
 
 Two tests hold that in place — `hold the limit and every light is green when
-you get there`, and `arrive early, because you hurried, and it is red`. If
-either ever failed, speeding would quietly have become optimal.
+you get there`, and `arrive early, because you hurried, and it is red`.
 
 ## The traffic is not scripted
 
@@ -320,27 +388,54 @@ you want, back off as the gap to the car in front closes.
 dv/dt = a[1 - (v/v0)^4 - (want/gap)^2]
 ```
 
-Jams come out of that on their own. One van that wants 34 km/h in a 50 grows
-a queue behind it without anyone deciding there should be a queue, and the
-queue then propagates backwards the way real ones do. Lorries live in the
-nearside lane, the offside runs thinner and faster, and which lane is moving
-is therefore a thing you can read — a scripted jam is an obstacle, an
-emergent one is traffic.
-
-Three details took the most work:
+Jams come out of that on their own, and the stop-start waves in a queue are
+nobody's decision. Three details took the most work:
 
 **Drivers want a fraction of the limit, not a fixed speed.** Storing an
 absolute desired speed meant a dawdler doing 30 km/h downtown was still doing
 30 on a 100 km/h expressway, and walled the fast road with city traffic.
 
 **Two cars will read the same gap in the same frame and both take it.** Lane
-changes are now decided in order against a list of claims, which took
-AI-on-AI overlaps from 95 over a run to zero.
+changes are decided in order against a list of claims, so a gap belongs to
+whoever called it first.
+
+**And IDM does not actually promise cars will not touch.** It models how
+people drive; in a dense queue a hard brake leaves two of them briefly inside
+one another. On a map that is a couple of pixels nobody sees, and from behind
+your own bumper it is two solid objects in the same place. So after everyone
+has moved, each lane is walked from the front and anything that ended up
+inside the car ahead is pushed back out — corrections under a metre, invisible
+in motion, and the player is in the ordering but is never moved. Over a full
+run that took overlapping pairs from 525 to zero.
 
 **The AI is not allowed to hit you.** It treats the player as an obstacle in
 both the lane it is in and the lane it is moving into, and refuses to merge
 anywhere near it. Every collision in the game is therefore the player's,
 which is the only way "no collisions" is a fair thing to score somebody on.
+
+## The view from behind the bumper
+
+The road is dead straight, which is the one thing that makes a perspective
+view cheap. A straight road projects to a trapezoid, so the whole carriageway
+is a single polygon and everything on it is a box drawn at the size its
+distance says. No meshes, no depth buffer, no library:
+
+```
+scale = focal / distance
+x     = w/2     + (worldX - camX)   * scale * w/2
+y     = horizon + (camHeight - worldY) * scale * w/2
+```
+
+Both axes use `w/2` so pixels stay square, and the horizon is where
+everything lands as distance runs to infinity — which is why it is a constant
+rather than something that needs computing. Sort the upright things back to
+front, fog the far clip, and that is the renderer.
+
+It matters because sitting in a queue is a completely different feeling when
+the car in front fills your windscreen instead of being a rectangle two
+centimetres away on a map. The map is still there on `V`, and the radar strip
+down the side of the dashboard is the same overhead read, out as far as the
+car you picked can see.
 
 ## Is par actually reachable?
 
@@ -348,19 +443,15 @@ A target nobody can hit without speeding is not a challenge, it is an
 instruction to speed — so the game ships with a driver that obeys every rule
 in the book, and the tests make it drive.
 
-`autopilot.ts` takes a `dash` dial from patient (0) to as assertive as the law
-allows (1), and never buys a second by breaking a rule. On race-day traffic:
-
 ```
-  every car, patient, clean            215-223 s      par 228
-  everyday car, assertive, clean           193 s
-  worst car on the worst shuffled road     236 s      still a medal
+  every car, race-day traffic, clean      204-221 s      par 228
+  the same roads, shuffled                195-272 s      your luck varies
 ```
 
-So every car in the garage can beat par without a single violation, and
-driving well is worth about thirty seconds on top. Both are assertions, not
-observations: `route.test.ts` fails if a car stops being able to make it, if
-skill stops paying, or if anything crashes.
+Every car in the garage beats par on race day without a single violation, and
+none of them can crash doing it. That is why the default run is always
+race-day traffic: par means nothing against a road that is different every
+attempt, so a shuffled road is offered as its own thing.
 
 ## The garage
 
@@ -373,9 +464,9 @@ skill stops paying, or if anything crashes.
 | Delivery Van | Slow and awkward, but sees the whole jam coming |
 
 Top speed barely matters when the limit is the limit, so the cars separate on
-acceleration out of the queue, on how fast they cross a lane, and on how far
-up the road their radar reads. The van is the only one whose sight line
-reaches 300 m, which is its entire compensation for being the van.
+acceleration out of a queue, on how fast they cross a lane, and on how far up
+the road their radar reads. The van is the only one whose sight line reaches
+300 m, which is its entire compensation for being the van.
 
 ## Where it lives
 
@@ -386,7 +477,8 @@ reaches 300 m, which is its entire compensation for being the van.
 | `src/traffic/rules.ts` | The law and what breaking it costs | yes |
 | `src/traffic/sim.ts` | Physics, traffic, collisions — `step(sim, input, dt)` | yes |
 | `src/traffic/autopilot.ts` | The law-abiding driver | yes |
-| `src/traffic/render.ts` | Canvas drawing | reads only |
+| `src/traffic/chase.ts` | The view from the car | reads only |
+| `src/traffic/render.ts` | The view from above | reads only |
 | `src/traffic/ui/` | React screens | no |
 
 Same rule as next door: everything that decides anything is pure. `step()`
@@ -408,7 +500,7 @@ microphone, which works fine for chord detection.
 ```
 npm install
 npm run dev      # musek at /, the traffic game at /traffic.html
-npm test         # 234 tests
+npm test         # 238 tests
 npm run bench    # accuracy benchmark and parameter sweeps
 ```
 

@@ -36,8 +36,16 @@ export interface Violation {
   open: boolean;
 }
 
-/** Fine per second, as a multiple of the time speeding saves. Must exceed 1. */
-export const SPEEDING_K = 1.5;
+/**
+ * Fine per second, as a multiple of the time speeding saves.
+ *
+ * Anything over 1 makes speeding lose on the open road, but a road with
+ * lights on it has a second term the fine cannot see: hurry to a light and
+ * you sometimes catch a green you would otherwise have sat at, which is worth
+ * a whole cycle and costs nothing. Measured against the route, 1.5 left that
+ * gamble roughly break-even. Three makes the fine bigger than the light.
+ */
+export const SPEEDING_K = 3;
 /** Speedo slop, m/s. Under this you are not called a speeder, though the fine still accrues. */
 export const SPEEDING_TOLERANCE = 2 / 3.6;
 export const RED_LIGHT_PENALTY = 20;
@@ -49,8 +57,11 @@ export const TAILGATE_HEADWAY = 1.0;
 /** Closing up for a moment is traffic. Staying there is tailgating. */
 export const TAILGATE_GRACE = 1.5;
 export const TAILGATE_RATE = 0.6;
-/** Below this speed you are in a queue, not tailgating. */
-export const TAILGATE_MIN_SPEED = 2;
+/**
+ * Below this speed you are in a queue, not tailgating. Bumper to bumper at
+ * walking pace is what a jam *is* -- fining it would be fining the traffic.
+ */
+export const TAILGATE_MIN_SPEED = 5.5;
 
 export const LABELS: Record<ViolationKind, string> = {
   speeding: 'Speeding',

@@ -137,12 +137,22 @@ export const NO_INPUT: Input = { throttle: false, brake: false, move: 0, toggle:
 
 export const laneX = (lane: number): number => lane * LANE_WIDTH;
 
+/** Where you join the queue. */
+export const START_LANE = 1;
+
 /** Deterministic, so a seed is a road: the same traffic every time you retry. */
 function mulberry(state: number): [number, number] {
   let a = (state + 0x6d2b79f5) | 0;
   let t = Math.imul(a ^ (a >>> 15), 1 | a);
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return [((t ^ (t >>> 14)) >>> 0) / 4294967296, a];
+}
+
+/** Stable small hash, for choices that must be the same every run of a seed. */
+function mix(a: number, b: number): number {
+  let h = Math.imul((a | 0) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b | 0) + 0x165667b1, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 13), 0x27d4eb2f);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 const TRAFFIC_COLOURS = [
@@ -177,20 +187,26 @@ export function createSim(route: Route, car: CarSpec, seed = 1): Sim {
   let id = 0;
   for (let lane = 0; lane < route.lanes; lane++) {
     // Lanes are not interchangeable. The nearside carries the lorries, the
-    // buses and the people who are not in a hurry; the offside runs thinner
-    // and quicker. Without that asymmetry every lane moves at the same speed
-    // and there is no road to read -- which is the difference between a
-    // traffic game and a queue.
-    const crowding = 1 + (route.lanes - 1 - 2 * lane) * 0.32;
-    const slowness = 1 + (route.lanes - 1 - 2 * lane) * 0.45;
-    let s = 14 + rnd() * 20;
+    // buses and the people who are not in a hurry; the offside runs thinner.
+    // On top of that each stretch of road shuffles its own mix, so which lane
+    // is the good one differs from jam to jam and has to be read rather than
+    // remembered. Without either, every lane moves at the same speed and
+    // there is nothing to do in a queue but wait.
+    const tilt = (route.lanes - 1 - 2 * lane) * 0.26;
+    // Start the queue right at the line. In your own lane that is a promise
+    // rather than a roll of the dice: the game opens on a bumper, not on
+    // thirty metres of empty road and a jam somewhere up ahead.
+    let s = lane === START_LANE ? 11.5 + rnd() * 2.5 : 8 + rnd() * 7;
     let lastS = -Infinity;
+    let lastLength = 0;
     let lastV = 99;
     while (s < route.length - 30) {
       const band = route.bands.find((b) => s >= b.from && s < b.to) ?? route.bands[route.bands.length - 1];
+      const crowding = (1 + tilt) * (0.72 + mix(band.from, lane) * 0.62);
+      const slowness = (1 + tilt * 1.6) * (0.7 + mix(band.from + 7, lane) * 0.7);
       const spacing = 1000 / (band.density * crowding);
       const limit = limitAt(route, s);
-      const dawdler = rnd() < Math.min(0.8, band.dawdlers * slowness);
+      const dawdler = rnd() < Math.min(0.85, band.dawdlers * slowness);
       // A driver aims at a fraction of whatever the limit is *here*, so the
       // same car crawls downtown and keeps up on the expressway. Storing an
       // absolute speed instead walls the fast road with city traffic.
@@ -200,11 +216,17 @@ export function createSim(route: Route, car: CarSpec, seed = 1): Sim {
       const topSpeed = lorry ? 21 + rnd() * 5 : 33 + rnd() * 22;
       const desired = Math.min(limit * eagerness, topSpeed);
       const length = lorry ? 7.5 + rnd() * 4 : 3.8 + rnd() * 1.6;
+      // Both cars have a length. Spacing off this one alone parks a lorry
+      // inside the hatchback behind it, and the queue opens the run already
+      // overlapping -- which in a view from behind the bumper is not subtle.
+      s = Math.max(s, lastS + (lastLength + length) / 2 + GAP_MIN + 0.4);
+      if (s >= route.length - 30) break;
       const blocked = worksIn(route, lane, s);
-      const nearStart = lane === 1 && s < 26;
+      // Just enough room not to start the run already touching somebody.
+      const nearStart = lane === START_LANE && s < 11;
       if (!blocked && !nearStart) {
         // The gap this car actually has decides how fast it can be going.
-        const gap = s - lastS - length;
+        const gap = s - lastS - (lastLength + length) / 2;
         const room = Number.isFinite(gap) ? Math.max(0, (gap - GAP_MIN) / GAP_TIME) : desired;
         traffic.push({
           id: id++, s, x: laneX(lane), lane, target: lane, cross: 0,
@@ -214,9 +236,10 @@ export function createSim(route: Route, car: CarSpec, seed = 1): Sim {
           signal: 0, braking: false, cooldown: rnd() * 6, fussiness: 0.8 + rnd() * 2.2,
         });
         lastS = s;
+        lastLength = length;
         lastV = traffic[traffic.length - 1].v;
       }
-      s += Math.max(length + GAP_MIN + 1, spacing * (0.55 + rnd() * 0.9));
+      s += spacing * (0.55 + rnd() * 0.9);
     }
   }
 
@@ -225,7 +248,7 @@ export function createSim(route: Route, car: CarSpec, seed = 1): Sim {
     route,
     car,
     player: {
-      s: 0, x: laneX(1), v: 0, lane: 1, target: 1, cross: 0,
+      s: 0, x: laneX(START_LANE), v: 0, lane: START_LANE, target: START_LANE, cross: 0,
       signal: 0, signalFor: 0, braking: false, gap: Infinity,
     },
     traffic,
@@ -334,8 +357,15 @@ function laneValue(lead: Ahead | null, desired: number): number {
 /** A slot another car has already decided to take this frame. */
 interface Claim { lane: number; s: number; span: number }
 
+/**
+ * `urgent` is a driver who must leave this lane because it ends; `zip` is that
+ * same driver with the cones in sight and no gap to be had, taking the one
+ * that is there. Without it a closed lane in solid traffic never merges at
+ * all, everything behind it stops for good, and the road quietly becomes
+ * unfinishable.
+ */
 function safeToEnter(
-  veh: Vehicle, lanes: Obstacle[][], lane: number, urgent: boolean, claims: Claim[],
+  veh: Vehicle, lanes: Obstacle[][], lane: number, urgent: boolean, claims: Claim[], zip = false,
 ): boolean {
   // Two cars reading the same gap in the same frame both find it empty, and
   // both take it. Whoever decides first owns it.
@@ -346,16 +376,16 @@ function safeToEnter(
   const half = veh.length / 2;
   const lead = ahead(list, veh.s, half, veh.v, veh.id);
   const trail = behind(list, veh.s, half, veh.id);
-  const needLead = GAP_MIN + veh.length * 0.25 + veh.v * (urgent ? 0.35 : 0.6);
+  const needLead = GAP_MIN + veh.length * 0.25 + veh.v * (zip ? 0.15 : urgent ? 0.35 : 0.6);
   if (lead && (lead.gap < needLead || lead.id === PLAYER_ID)) return false;
   if (!trail) return true;
   if (trail.id === PLAYER_ID) return false;
-  const needTrail = GAP_MIN + veh.length * 0.2 + trail.v * (urgent ? 0.3 : 0.55);
+  const needTrail = GAP_MIN + veh.length * 0.2 + trail.v * (zip ? 0.12 : urgent ? 0.3 : 0.55);
   if (trail.gap < needTrail) return false;
   // Would the car behind have to stand on the brakes?
   const closing = trail.v - veh.v;
   const decel = closing > 0 ? (closing * closing) / (2 * Math.max(trail.gap, 0.5)) : 0;
-  return decel < (urgent ? 3.5 : 2.2);
+  return decel < (zip ? 5 : urgent ? 3.5 : 2.2);
 }
 
 function stepTraffic(sim: Sim, lanes: Obstacle[][], dt: number, rnd: () => number): Vehicle[] {
@@ -380,6 +410,8 @@ function stepTraffic(sim: Sim, lanes: Obstacle[][], dt: number, rnd: () => numbe
       // The closed lane is not a preference, it is a wall with a date on it.
       const closure = sim.route.works.find((w) => w.lane === lane && w.from > veh.s && w.from - veh.s < 160);
       const urgent = closure !== undefined;
+      // Cones in sight, crawling, nowhere to go: take what is there.
+      const zip = closure !== undefined && closure.from - veh.s < 42 && veh.v < 9;
       const here = laneValue(lead, desired);
       let best = target;
       let bestValue = urgent ? -Infinity : here + veh.fussiness;
@@ -387,7 +419,7 @@ function stepTraffic(sim: Sim, lanes: Obstacle[][], dt: number, rnd: () => numbe
         const c = lane + dir;
         if (c < 0 || c >= sim.route.lanes) continue;
         if (sim.route.works.some((w) => w.lane === c && w.from - 40 < veh.s + 120 && w.to > veh.s)) continue;
-        if (!safeToEnter(veh, lanes, c, urgent, claims)) continue;
+        if (!safeToEnter(veh, lanes, c, urgent, claims, zip)) continue;
         const value = laneValue(ahead(lanes[c], veh.s, half, veh.v, veh.id), desired);
         if (value > bestValue) {
           best = c;
@@ -416,6 +448,48 @@ function stepTraffic(sim: Sim, lanes: Obstacle[][], dt: number, rnd: () => numbe
     const x = lane === target ? laneX(lane) : laneX(lane) + (laneX(target) - laneX(lane)) * smoothstep(cross);
     return { ...veh, s: veh.s + v * dt, v, x, lane, target, cross, signal, braking: a < -0.8, cooldown, desired };
   });
+}
+
+/**
+ * The constraint the driver model does not provide.
+ *
+ * IDM describes how people drive, not a promise that they never touch: in a
+ * dense queue a hard brake leaves two cars briefly inside one another. On a
+ * map that is a couple of pixels nobody sees. From behind your own bumper it
+ * is two solid objects in the same place, which is the sort of thing you
+ * cannot stop noticing once you have seen it.
+ *
+ * So after everyone has moved, walk each lane from the front and push anything
+ * that ended up inside the car ahead back out of it. Corrections are under a
+ * metre and invisible in motion. The player is in the ordering but is never
+ * moved -- being shoved by the simulation is worse than any overlap.
+ */
+function separate(traffic: Vehicle[], player: PlayerState, car: CarSpec, lanes: number): Vehicle[] {
+  const out = traffic.map((v) => ({ ...v }));
+  for (let lane = 0; lane < lanes; lane++) {
+    const here: Array<{ s: number; length: number; v: number; veh: Vehicle | null }> = [];
+    for (const veh of out) {
+      if (veh.lane === lane || veh.target === lane) here.push({ s: veh.s, length: veh.length, v: veh.v, veh });
+    }
+    if (player.lane === lane || player.target === lane) {
+      here.push({ s: player.s, length: car.length, v: player.v, veh: null });
+    }
+    here.sort((a, b) => b.s - a.s);
+
+    let rear = Infinity;
+    let leadV = Infinity;
+    for (const e of here) {
+      const front = e.s + e.length / 2;
+      if (e.veh && front > rear - 0.04) {
+        e.veh.s = Math.min(e.veh.s, rear - 0.04 - e.length / 2);
+        e.veh.v = Math.min(e.veh.v, Math.max(0, leadV));
+        e.s = e.veh.s;
+      }
+      rear = e.s - e.length / 2;
+      leadV = e.veh ? e.veh.v : e.v;
+    }
+  }
+  return out;
 }
 
 function flash(sim: Sim, text: string, detail: string, tone: Flash['tone']): Flash[] {
@@ -545,7 +619,8 @@ export function step(sim: Sim, input: Input, dt: number): Sim {
     }
   }
 
-  const traffic = stepTraffic(sim, lanes, dt, rnd);
+  const moved = stepTraffic(sim, lanes, dt, rnd);
+  const traffic = separate(moved, { ...p, s, x, v, lane, target }, car, route.lanes);
 
   return {
     ...sim,

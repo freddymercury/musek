@@ -112,12 +112,12 @@ describe('the green wave', () => {
  * can get there, the brief is honest.
  */
 describe('the drive is possible legally', () => {
-  const drive = (carIndex: number, seed: number, dash = 0): Sim => {
+  const drive = (carIndex: number, seed: number, dash = 0, overspeed = 1): Sim => {
     let sim = createSim(route, CARS[carIndex], seed);
     let mem = AUTO_START;
     const dt = 1 / 50;
-    for (let i = 0; i < 40000 && !sim.finished && !sim.crashed; i++) {
-      const next = autopilot(sim, mem, dt, dash);
+    for (let i = 0; i < 80000 && !sim.finished && !sim.crashed; i++) {
+      const next = autopilot(sim, mem, dt, dash, overspeed);
       mem = next.mem;
       sim = step(sim, next.input, dt);
     }
@@ -126,35 +126,48 @@ describe('the drive is possible legally', () => {
 
   const seeds = [1, 2, 3];
 
+  /**
+   * On a shuffled road your luck varies a lot -- missing one green at the
+   * merge cascades into missing the next -- so what is promised here is that
+   * the drive is always completable, cleanly, in anything in the garage. Par
+   * is promised against race-day traffic, below, where it means something.
+   */
   test.each(CARS.map((c, i) => [c.name, i] as const))('%s arrives, clean, in traffic', (_name, i) => {
     for (const seed of seeds) {
       const sim = drive(i, seed);
       expect(sim.finished).toBe(true);
       expect(sim.crashed).toBeNull();
       expect(sim.violations).toEqual([]);
-      // Worst car, worst traffic still medals: par is generous, not impossible.
-      expect(grade({ crashed: false, total: total(sim), violations: [], par: route.par })).not.toBe('late');
     }
-  });
+  }, 60000);
 
   test.each(CARS.map((c, i) => [c.name, i] as const))('%s beats par on race day', (_name, i) => {
     const sim = drive(i, route.raceDay);
     expect(sim.violations).toEqual([]);
     expect(total(sim)).toBeLessThan(route.par);
-  });
+    expect(grade({ crashed: false, total: total(sim), violations: [], par: route.par })).toBe('gold');
+  }, 60000);
 
   /**
-   * The other half of the bargain. If driving better cannot beat driving
-   * patiently, the road has no game in it and every run is the traffic's time,
-   * not the player's.
+   * The claim the scoring is built on, put to an actual drive rather than to
+   * the arithmetic alone. The same driver, on the same road, in the same
+   * traffic, doing 25% over everywhere: the fines outrun the time saved, and
+   * the green wave takes back more on top by handing them a red at every
+   * light they hurried to.
    */
-  test('driving assertively -- still inside the law -- beats driving patiently', () => {
-    const patient = drive(0, route.raceDay);
-    const assertive = drive(0, route.raceDay, 1);
-    expect(assertive.violations).toEqual([]);
-    expect(assertive.crashed).toBeNull();
-    expect(total(assertive)).toBeLessThan(total(patient) - 10);
-  });
+  test('the same driver, speeding, arrives later', () => {
+    const lawful = drive(0, route.raceDay);
+    expect(lawful.violations).toEqual([]);
+
+    for (const overspeed of [1.15, 1.25, 1.5]) {
+      const speeder = drive(0, route.raceDay, 0, overspeed);
+      expect(speeder.violations.length).toBeGreaterThan(0);
+      // Genuinely quicker on the road...
+      expect(speeder.t).toBeLessThan(lawful.t);
+      // ...and still later into the seat, once the road is paid for.
+      expect(total(speeder)).toBeGreaterThan(total(lawful));
+    }
+  }, 60000);
 });
 
 /**

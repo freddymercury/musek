@@ -39,6 +39,12 @@ export interface Works {
   from: number;
   to: number;
   reason: string;
+  /**
+   * Cones and a resurfacing crew, or somebody's morning going wrong in lane
+   * two. The simulation treats both as a lane that is not there; only the
+   * renderer cares which it is.
+   */
+  kind: 'roadworks' | 'stalled';
 }
 
 /** How thick the traffic is over a stretch of road. */
@@ -83,7 +89,7 @@ export function waveOffset(arrival: number, cycle: number, lead = 6): number {
 }
 
 /** Metres of queue at the start, and how long a competent driver needs to clear it. */
-export const JAM_END = 200;
+export const JAM_END = 120;
 export const JAM_TIME = 29;
 
 /**
@@ -144,10 +150,10 @@ const riverside = fromKmh(60);
  * also where the wave is worth catching.
  */
 const ARENA_ZONES: Zone[] = [
-  { from: 0, to: 800, limit: city, name: 'Downtown' },
-  { from: 800, to: 1300, limit: riverside, name: 'Riverside Avenue' },
-  { from: 1300, to: 2150, limit: fromKmh(100), name: 'Coast Expressway' },
-  { from: 2150, to: 2600, limit: fromKmh(40), name: 'Arena Approach' },
+  { from: 0, to: 780, limit: city, name: 'Downtown' },
+  { from: 780, to: 1200, limit: riverside, name: 'Riverside Avenue' },
+  { from: 1200, to: 1950, limit: fromKmh(100), name: 'Coast Expressway' },
+  { from: 1950, to: 2400, limit: fromKmh(40), name: 'Arena Approach' },
 ];
 
 /** A light timed to the wave: green just before a limit-abiding driver arrives. */
@@ -158,27 +164,38 @@ const wave = (id: string, s: number, green: number, yellow: number, red: number)
 export const ARENA_ROUTE: Route = {
   name: 'Meridian Arena, Gate C',
   seat: 'Row D, seat 14',
-  length: 2600,
+  length: 2400,
   lanes: 3,
   zones: ARENA_ZONES,
   lights: [
-    wave('l1', 260, 22, 3, 11),
-    wave('l2', 1240, 22, 3, 11),
-    wave('l3', 2330, 20, 3, 13),
+    wave('l1', 250, 22, 3, 11),
+    wave('l2', 1150, 22, 3, 11),
+    wave('l3', 2080, 20, 3, 13),
   ],
   works: [
-    { id: 'w1', lane: 0, from: 950, to: 1150, reason: 'Resurfacing' },
-    { id: 'w2', lane: 2, from: 2420, to: 2500, reason: 'Event barriers' },
+    // Two of these are roadworks and two are somebody's bad morning. The ones
+    // inside the jams are the point: a queue with a blocked lane in it is a
+    // queue you can read, and one you can be in the wrong half of.
+    { id: 'w0', lane: 2, from: 82, to: 90, reason: 'Broken down', kind: 'stalled' },
+    { id: 'w1', lane: 0, from: 900, to: 1080, reason: 'Resurfacing', kind: 'roadworks' },
+    { id: 'w2', lane: 1, from: 2210, to: 2218, reason: 'Van unloading', kind: 'stalled' },
+    { id: 'w3', lane: 2, from: 2300, to: 2360, reason: 'Event barriers', kind: 'roadworks' },
   ],
   bands: [
-    { from: 0, to: 200, density: 38, dawdlers: 0.5 },
-    { from: 200, to: 800, density: 13, dawdlers: 0.2 },
-    { from: 800, to: 1300, density: 12, dawdlers: 0.2 },
-    { from: 1300, to: 2150, density: 8, dawdlers: 0.12 },
-    { from: 2150, to: 2600, density: 14, dawdlers: 0.28 },
+    // Gridlock, open road, the merge, the run, and the crawl to the gate. A
+    // jam is only worth sitting in if it ends, so the dense stretches are
+    // stretches: bumper to bumper for a couple of hundred metres, not for two
+    // and a half kilometres.
+    { from: 0, to: 120, density: 95, dawdlers: 0.55 },
+    { from: 120, to: 780, density: 14, dawdlers: 0.2 },
+    { from: 780, to: 1200, density: 24, dawdlers: 0.3 },
+    { from: 1200, to: 1950, density: 9, dawdlers: 0.12 },
+    { from: 1950, to: 2150, density: 24, dawdlers: 0.35 },
+    { from: 2150, to: 2300, density: 75, dawdlers: 0.5 },
+    { from: 2300, to: 2400, density: 26, dawdlers: 0.3 },
   ],
   par: 228,
-  raceDay: 4,
+  raceDay: 3,
 };
 
 /** Seconds left in the phase this light is currently showing. */

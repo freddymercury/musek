@@ -136,7 +136,7 @@ describe('metal', () => {
   });
 
   test('a closed lane is as solid as a car', () => {
-    const route = plainRoute({ works: [{ id: 'w', lane: 1, from: 100, to: 200, reason: 'Test' }] });
+    const route = plainRoute({ works: [{ id: 'w', lane: 1, from: 100, to: 200, reason: 'Test', kind: 'roadworks' as const }] });
     const sim = run(empty(route), 30, throttle);
     expect(sim.crashed?.what).toBe('the roadworks');
   });
@@ -155,7 +155,75 @@ describe('metal', () => {
     }, 90);
     expect(sim.crashed).toBeNull();
     expect(sim.player.v).toBe(0);
+  }, 30000);
+});
+
+/**
+ * The scenario the whole thing is named after. A jam has to be dense enough
+ * to actually be one, short enough to end, and -- the part that makes it a
+ * game rather than a wait -- uneven enough that being in the right half of it
+ * is worth something.
+ */
+describe('sitting in traffic', () => {
+  const opening = ARENA_ROUTE.bands[0];
+
+  test('the queue you start in is bumper to bumper', () => {
+    const sim = createSim(ARENA_ROUTE, hatch, ARENA_ROUTE.raceDay);
+    const queue = sim.traffic.filter((v) => v.s < opening.to).sort((a, b) => a.s - b.s);
+    expect(queue.length).toBeGreaterThan(20);
+
+    const gaps: number[] = [];
+    for (let lane = 0; lane < ARENA_ROUTE.lanes; lane++) {
+      const inLane = queue.filter((v) => v.lane === lane);
+      for (let i = 1; i < inLane.length; i++) {
+        gaps.push(inLane[i].s - inLane[i - 1].s - (inLane[i].length + inLane[i - 1].length) / 2);
+      }
+    }
+    const median = gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+    expect(median).toBeLessThan(9);
+    // And at that spacing nobody is going anywhere fast: a shade over walking
+    // pace for a cyclist, which is what a jam moves at.
+    expect(queue.reduce((sum, v) => sum + v.v, 0) / queue.length).toBeLessThan(6.5);
   });
+
+  test('but it ends -- the road is not one long queue', () => {
+    const dense = ARENA_ROUTE.bands.filter((b) => b.density > 50);
+    const metres = dense.reduce((sum, b) => sum + (b.to - b.from), 0);
+    expect(metres).toBeGreaterThan(150);
+    expect(metres).toBeLessThan(ARENA_ROUTE.length * 0.2);
+  });
+
+  test('a jam is uneven, so there is a better lane to find', () => {
+    const sim = createSim(ARENA_ROUTE, hatch, ARENA_ROUTE.raceDay);
+    for (const band of ARENA_ROUTE.bands.filter((b) => b.density > 50)) {
+      const counts = [0, 1, 2].map((lane) =>
+        sim.traffic.filter((v) => v.lane === lane && v.s >= band.from && v.s < band.to).length);
+      expect(Math.max(...counts) / Math.max(1, Math.min(...counts))).toBeGreaterThan(1.2);
+    }
+  });
+
+  /**
+   * The failure this guards against is not subtle: if nobody ever lets a
+   * merging car in, the closed lane stops forever, the queue behind it stops
+   * forever, and the route cannot be finished at all.
+   */
+  test('a lane blocked inside a jam still drains', () => {
+    const route = plainRoute({
+      length: 2000,
+      works: [{ id: 'stall', lane: 1, from: 300, to: 308, reason: 'Broken down', kind: 'stalled' as const }],
+      bands: [{ from: 0, to: 2000, density: 70, dawdlers: 0.4 }],
+    });
+    // The player stays on the start line, well behind all of this.
+    const start = createSim(route, hatch, 9);
+    // Follow these particular cars: counting what sits behind the blockage
+    // measures the queue refilling from behind, not whether anyone got out.
+    const queued = start.traffic.filter((v) => v.lane === 1 && v.s < 300 && v.s > 60).map((v) => v.id);
+    expect(queued.length).toBeGreaterThan(5);
+
+    const after = run(start, 150);
+    const past = after.traffic.filter((v) => queued.includes(v.id) && v.s > 320).length;
+    expect(past).toBeGreaterThan(queued.length * 0.7);
+  }, 30000);
 });
 
 describe('the road', () => {
